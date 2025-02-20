@@ -1,5 +1,7 @@
-### README 
-Right now this is something like an implementation of c++ X macros in zig. 
+# README 
+Just messing around with some SQL parsing/lexing.
 
-Honestly, this is probably a horrible thing to do in zig, but wanted to see if I could stretch comptime to do it. 
 
+Cool Features?: 
+- GenTokenTypes() is something like a C++ X macro that takes in a static compile time list of STRINGS and creates a TAGGED UNION type from them. Theoretically you could compile time read in a list of strings from a file  (or network??) and create a zig type from them. Wild.
+- SOA oriented list of parsed tokens. 
