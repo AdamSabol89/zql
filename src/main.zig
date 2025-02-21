@@ -3,13 +3,43 @@ const Type = std.builtin.Type;
 const StructField = Type.StructField;
 const UnionField = Type.UnionField;
 const EnumField = Type.EnumField;
+const tables = @import("tables.zig");
+const parser = @import("parser.zig");
 
 const TokenInfo = struct {
     lexeme: []const u8,
     index: usize,
 };
 
-const TokenTypesList = [_][:0]const u8{ "IDENTIFIER", "SELECT", "FROM", "WHERE", "LIMIT", "*", "=", "JOIN", "INNER", "OUTER", "ON", "AND" };
+//thoughts:
+// we can do token_vals = [ ], token_types = []
+// this mean each  KEYWORD is its own token
+//
+const TokenValList = [_][]const u8{
+    "IDENTIFIER",
+    "SELECT",
+    "FROM",
+    "WHERE",
+    "LIMIT",
+    "WILDCARD",
+    "EQUALS",
+    "JOIN",
+    "INNER",
+    "OUTER",
+    "ON",
+    "AND",
+    "UPDATE",
+    "DELETE",
+    "INSERT",
+    "COMMA",
+    "RIGHT_PAREN",
+    "LEFT_PAREN",
+    "ADD_OPP",
+};
+const TokenTypesList = [_][:0]const u8{ "IDENTIFIER", "SELECT", "FROM", "WHERE", "LIMIT", "*", "=", "JOIN", "INNER", "OUTER", "ON", "AND", "UPDATE", "DELETE", "INSERT", ",", ")", "(", "+" };
+
+const TokenTypes = GenTokenTypes(&TokenTypesList);
+pub const SOA_TokenTypes = std.MultiArrayList(TokenTypes);
 
 pub fn GenTokenTypes(comptime token_types: []const [:0]const u8) type {
     comptime var enum_fields: [token_types.len]EnumField = undefined;
@@ -49,10 +79,8 @@ pub fn GenTokenTypes(comptime token_types: []const [:0]const u8) type {
     return @Type(LTokenTypes);
 }
 
-const TokenTypes = GenTokenTypes(&TokenTypesList);
-const SOA_TokenTypes = std.MultiArrayList(TokenTypes);
-
-pub fn parse_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
+//TODO: think about parser some more
+pub fn tokenize_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
     const delimiters = [_]u8{ ' ', '\n', '\t' };
 
     var token_iter = std.mem.tokenizeAny(u8, query, delimiters[0..]);
@@ -61,8 +89,7 @@ pub fn parse_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
     var token_index: usize = 0;
     token_iter: while (token_iter.next()) |token| {
 
-        //TODO: hashtable with function pointers? honestly dont think so since SQL kw are short
-        //HANDLE COMMENTS
+        // HANDLE COMMENTS
         if (std.mem.startsWith(u8, token, "--")) {
             var i = 0 + token_iter.index;
 
@@ -75,13 +102,12 @@ pub fn parse_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
             continue :token_iter;
         }
 
-        //HANDLE KEYWORDS
-        inline for (TokenTypesList, 0..TokenTypesList.len) |match_token, i| {
-            _ = i;
+        // HANDLE KEYWORDS
+        inline for (TokenTypesList) |match_token| {
             if (std.mem.eql(u8, match_token[0..], token)) {
                 defer token_index += 1;
 
-                std.debug.print("Found Token: {s} at: {d} \n", .{ token, token_iter.index });
+                //std.debug.print("Found Token: {s} at: {d} \n", .{ token, token_iter.index });
 
                 const parsed_token_payload = .{ .lexeme = token, .index = token_iter.index };
                 const parsed_token = @unionInit(TokenTypes, match_token, parsed_token_payload);
@@ -92,25 +118,63 @@ pub fn parse_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
             }
         }
 
-        //TODO: HANDLE IDENTIFIERS
+        // HANDLE IDENTIFIERS
         const parsed_token = TokenTypes{ .IDENTIFIER = .{
             .lexeme = token,
             .index = token_iter.index,
         } };
+
         try SOA_token.insert(allocator, token_index, parsed_token);
         token_index += 1;
 
-        std.debug.print("Identifier: {s}, at: {d} \n", .{ token, token_iter.index });
+        //std.debug.print("Identifier: {s}, at: {d} \n", .{ token, token_iter.index });
     }
 
     return SOA_token;
 }
 
+pub fn parse_query_syntax(tables_table: tables.TablesTable, tokens: SOA_TokenTypes) void {
+    const init_query_token = tokens.get(0);
+
+    switch (init_query_token) {
+        .SELECT => {
+            parser.parse_select_query(tables_table, tokens);
+        },
+        .UPDATE => {},
+        .INSERT => {},
+        .DELETE => {},
+    }
+}
+
+test "parse query" {
+    const allocator = std.testing.allocator;
+
+    var tokens = try tokenize_query(allocator);
+    defer tokens.deinit(allocator);
+
+    var tables_table = try tables.initTestTables(allocator);
+    defer tables.deinitTablesTable(&tables_table, allocator);
+
+    parse_query_syntax(tables_table, tokens);
+}
+
 test "tokenize query" {
     const allocator = std.testing.allocator;
-    var tokens = try parse_query(allocator);
+
+    var tokens = try tokenize_query(allocator);
     defer tokens.deinit(allocator);
-    std.debug.print("this many tokens: {d}\n", .{tokens.len});
+
+    const ident_token = tokens.get(1);
+
+    switch (ident_token) {
+        .IDENTIFIER => |token| {
+            try std.testing.expect(std.mem.eql(u8, token.lexeme, "IDENTIFIER"));
+        },
+
+        else => {
+            std.debug.print("FUCK", .{});
+        },
+    }
 }
 
 test "create token tagged union" {
@@ -125,7 +189,9 @@ test "create token tagged union" {
 }
 
 const query =
-    \\ SELECT * 
+    \\ SELECT 
+    \\    users.name + users.phone,  
+    \\    FUNCTION(users.name, users.phone),
     \\ --THIS IS A COMMENT 
     \\ FROM users
     \\ JOIN content ON users.content_id = content.id
