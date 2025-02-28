@@ -5,38 +5,34 @@ const UnionField = Type.UnionField;
 const EnumField = Type.EnumField;
 const tables = @import("tables.zig");
 const parser = @import("parser.zig");
+const assert = std.debug.assert;
 
 const TokenInfo = struct {
     lexeme: []const u8,
     index: usize,
+    //line_num: usize,
+    //line_index: usize,
 };
 
 //thoughts:
 // we can do token_vals = [ ], token_types = []
 // this mean each  KEYWORD is its own token
 //
-const TokenValList = [_][]const u8{
-    "IDENTIFIER",
+const TokenTypesList = [_][:0]const u8{ "STAR", "EQUALS", "COMMA", "RIGHT_PAREN", "LEFT_PAREN", "PLUS", "DASH", "F_SLASH", "SEMI_COLON", "BARE_WORD" };
+
+const TokenValList = [_][]const u8{ "*", "=", ",", ")", "(", "+", "-", "/", ";", "BARE_WORD" };
+
+const Keywords = [_][]const u8{
     "SELECT",
     "FROM",
     "WHERE",
-    "LIMIT",
-    "WILDCARD",
-    "EQUALS",
     "JOIN",
     "INNER",
     "OUTER",
-    "ON",
-    "AND",
-    "UPDATE",
-    "DELETE",
-    "INSERT",
-    "COMMA",
-    "RIGHT_PAREN",
-    "LEFT_PAREN",
-    "ADD_OPP",
+    "LEFT",
+    "RIGHT",
+    "LIMIT",
 };
-const TokenTypesList = [_][:0]const u8{ "IDENTIFIER", "SELECT", "FROM", "WHERE", "LIMIT", "*", "=", "JOIN", "INNER", "OUTER", "ON", "AND", "UPDATE", "DELETE", "INSERT", ",", ")", "(", "+" };
 
 const TokenTypes = GenTokenTypes(&TokenTypesList);
 pub const SOA_TokenTypes = std.MultiArrayList(TokenTypes);
@@ -79,55 +75,90 @@ pub fn GenTokenTypes(comptime token_types: []const [:0]const u8) type {
     return @Type(LTokenTypes);
 }
 
-//TODO: think about parser some more
-pub fn tokenize_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
-    const delimiters = [_]u8{ ' ', '\n', '\t' };
+//Node (val, pointer, len)
+//    pointer, pointer, ponter
+//        Node (val pointer len)
 
-    var token_iter = std.mem.tokenizeAny(u8, query, delimiters[0..]);
+//detect non keyword tokens ->
+//if its bareword do hashlookup in table
+//if not assume its identifier
+//SELECT, INSERT, UPDATE, STAR
+//linear search children???
+//
+//
+//std.StaticStringMap()
+
+//THIS IS GARBAGE
+inline fn finish_bareword(previous_index: *usize, current_index: *usize, token_index: *usize, SOA_token: *SOA_TokenTypes, allocator: std.mem.Allocator) !void {
+    const lexeme = query[previous_index.*..current_index.*];
+
+    const parsed_token = TokenTypes{ .BARE_WORD = .{
+        .lexeme = lexeme,
+        .index = previous_index.*,
+    } };
+    std.debug.print("Bare word: {s}, at: {d} \n", .{ lexeme, previous_index.* });
+
+    try SOA_token.*.insert(allocator, token_index.*, parsed_token);
+    token_index.* += 1;
+    previous_index.* = 0;
+}
+
+pub fn tokenize_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
+    const white_space = [_]u8{ ' ', '\n', '\t' };
+
     var SOA_token: SOA_TokenTypes = .{};
 
     var token_index: usize = 0;
-    token_iter: while (token_iter.next()) |token| {
+    var i: usize = 0;
+    var k: usize = 0;
+
+    token_iter: while (i < query.len) {
+
+        // HANDLE WHITE SPACE
+        inline for (white_space) |value| {
+            if (query[i] == value) {
+                try finish_bareword(&k, &i, &token_index, &SOA_token, allocator);
+                i += 1;
+                continue :token_iter;
+            }
+        }
 
         // HANDLE COMMENTS
-        if (std.mem.startsWith(u8, token, "--")) {
-            var i = 0 + token_iter.index;
+        if (std.mem.startsWith(u8, query[i..], "--")) {
+            try finish_bareword(&k, &i, &token_index, &SOA_token, allocator);
 
             while (query[i] != '\n') {
                 i += 1;
             }
 
-            token_iter.index = i;
-
             continue :token_iter;
         }
 
-        // HANDLE KEYWORDS
-        inline for (TokenTypesList) |match_token| {
-            if (std.mem.eql(u8, match_token[0..], token)) {
+        // HANDLE MATCH_TOKENS
+        inline for (TokenValList, 0..TokenValList.len) |match_token, j| {
+            if (std.mem.eql(u8, match_token[0..], query[i .. i + match_token.len])) {
+                try finish_bareword(&k, &i, &token_index, &SOA_token, allocator);
                 defer token_index += 1;
 
-                //std.debug.print("Found Token: {s} at: {d} \n", .{ token, token_iter.index });
+                std.debug.print("Found Token: {s} at: {d} \n", .{ query[i..match_token.len], i });
 
-                const parsed_token_payload = .{ .lexeme = token, .index = token_iter.index };
-                const parsed_token = @unionInit(TokenTypes, match_token, parsed_token_payload);
+                const parsed_token_payload = .{ .lexeme = query[i..match_token.len], .index = i };
+                const parsed_token = @unionInit(TokenTypes, TokenTypesList[j], parsed_token_payload);
 
                 try SOA_token.insert(allocator, token_index, parsed_token);
 
+                i += match_token.len;
                 continue :token_iter;
             }
         }
 
-        // HANDLE IDENTIFIERS
-        const parsed_token = TokenTypes{ .IDENTIFIER = .{
-            .lexeme = token,
-            .index = token_iter.index,
-        } };
+        //IF all else fails were starting a new bareword or continuing a bareword
+        if (k == 0) {
+            k = i;
+        }
 
-        try SOA_token.insert(allocator, token_index, parsed_token);
-        token_index += 1;
-
-        //std.debug.print("Identifier: {s}, at: {d} \n", .{ token, token_iter.index });
+        i += 1;
+        std.debug.print("curr_index: {d}\n", .{i});
     }
 
     return SOA_token;
@@ -137,12 +168,10 @@ pub fn parse_query_syntax(tables_table: tables.TablesTable, tokens: SOA_TokenTyp
     const init_query_token = tokens.get(0);
 
     switch (init_query_token) {
-        .SELECT => {
-            parser.parse_select_query(tables_table, tokens);
+        .BARE_WORD => {
+            _ = parser.parse_select_query(tokens, tables_table);
         },
-        .UPDATE => {},
-        .INSERT => {},
-        .DELETE => {},
+        else => {},
     }
 }
 
@@ -167,8 +196,8 @@ test "tokenize query" {
     const ident_token = tokens.get(1);
 
     switch (ident_token) {
-        .IDENTIFIER => |token| {
-            try std.testing.expect(std.mem.eql(u8, token.lexeme, "IDENTIFIER"));
+        .BARE_WORD => |token| {
+            try std.testing.expect(std.mem.eql(u8, token.lexeme, "users.name"));
         },
 
         else => {
@@ -180,7 +209,7 @@ test "tokenize query" {
 test "create token tagged union" {
     const Token = GenTokenTypes(&TokenTypesList);
 
-    const select_token: Token = Token{ .SELECT = .{
+    const select_token: Token = Token{ .BARE_WORD = .{
         .lexeme = "",
         .index = 12,
     } };
@@ -189,9 +218,9 @@ test "create token tagged union" {
 }
 
 const query =
-    \\ SELECT 
-    \\    users.name + users.phone,  
-    \\    FUNCTION(users.name, users.phone),
+    \\SELECT 
+    \\    users.name + users.phone ,  
+    \\    FUNCTION(users.name , users.phone) ,
     \\ --THIS IS A COMMENT 
     \\ FROM users
     \\ JOIN content ON users.content_id = content.id

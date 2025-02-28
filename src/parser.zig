@@ -6,13 +6,15 @@ pub const QueryPlan = struct {};
 
 pub fn parse_select_query(tokens: lexer.SOA_TokenTypes, tables_table: tables.TablesTable) QueryPlan {
     _ = tables_table;
-    var i = 1;
+    var i: usize = 1;
 
     while (i < tokens.len) : (i += 1) {
         switch (tokens.get(i)) {
-            .IDENTIFIER => {},
+            .BARE_WORD => {},
 
             else => {},
         }
     }
+
+    return .{};
 }
