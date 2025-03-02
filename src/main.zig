@@ -22,17 +22,20 @@ const TokenTypesList = [_][:0]const u8{ "STAR", "EQUALS", "COMMA", "RIGHT_PAREN"
 
 const TokenValList = [_][]const u8{ "*", "=", ",", ")", "(", "+", "-", "/", ";", "BARE_WORD" };
 
-const Keywords = [_][]const u8{
-    "SELECT",
-    "FROM",
-    "WHERE",
-    "JOIN",
-    "INNER",
-    "OUTER",
-    "LEFT",
-    "RIGHT",
-    "LIMIT",
+const Keywords = [_]struct { []const u8 }{
+    .{"select"},
+    .{"from"},
+    .{"where"},
+    .{"join"},
+    .{"inner"},
+    .{"outer"},
+    .{"left"},
+    .{"right"},
+    .{"limit"},
 };
+
+const ComptimeSet = std.StaticStringMap(void);
+pub const KeywordsSet = ComptimeSet.initComptime(Keywords);
 
 const TokenTypes = GenTokenTypes(&TokenTypesList);
 pub const SOA_TokenTypes = std.MultiArrayList(TokenTypes);
@@ -75,33 +78,6 @@ pub fn GenTokenTypes(comptime token_types: []const [:0]const u8) type {
     return @Type(LTokenTypes);
 }
 
-//inline fn finish_bareword(previous_index: *usize, current_index: *usize, token_index: *usize, SOA_token: *SOA_TokenTypes, allocator: std.mem.Allocator) !void {
-//    const lexeme = query[previous_index.*..current_index.*];
-//
-//    const parsed_token = TokenTypes{ .BARE_WORD = .{
-//        .lexeme = lexeme,
-//        .index = previous_index.*,
-//    } };
-//    std.debug.print("Bare word: {s}, at: {d} \n", .{ lexeme, previous_index.* });
-//
-//    try SOA_token.*.insert(allocator, token_index.*, parsed_token);
-//    token_index.* += 1;
-//    previous_index.* = 0;
-//}
-
-pub inline fn handle_bareword(token_index: usize, bare_word_index: usize, i: usize, SOA_token: *SOA_TokenTypes, allocator: std.mem.Allocator) !usize {
-    if (bare_word_index == 0) {
-        return 0;
-    }
-
-    const bare_word = query[bare_word_index..i];
-    std.debug.print("FOUND BAREWORD {s}\n", .{bare_word});
-    const parsed_token = .{ .BARE_WORD = .{ .lexeme = bare_word, .index = i } };
-    try SOA_token.*.insert(allocator, token_index, parsed_token);
-
-    return 1;
-}
-
 const Scanner = struct {
     text: []const u8,
 
@@ -116,9 +92,11 @@ const Scanner = struct {
 
     const Self = @This();
 
-    pub fn init(soa_token: *SOA_TokenTypes, text: []const u8) Scanner {
+    pub fn init(soa_token: *SOA_TokenTypes, text: []const u8, allocator: std.mem.Allocator) !Scanner {
+        const lower = try std.ascii.allocLowerString(allocator, text);
+
         return .{
-            .text = text,
+            .text = lower,
             .soa_token = soa_token,
             .soa_token_index = 0,
             .curr_index = 0,
@@ -128,7 +106,11 @@ const Scanner = struct {
         };
     }
 
-    pub fn add_token(self: *Self, comptime token_enum_name: []const u8, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.text);
+    }
+
+    inline fn add_token(self: *Self, comptime token_enum_name: []const u8, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
         const parsed_token_payload = .{ .lexeme = self.text[start_index..end_index], .index = self.curr_index };
         const parsed_token = @unionInit(TokenTypes, token_enum_name, parsed_token_payload);
 
@@ -137,7 +119,7 @@ const Scanner = struct {
         self.*.soa_token_index += 1;
     }
 
-    pub fn skip_whitespace(self: *Self) void {
+    fn skip_whitespace(self: *Self) void {
         while (true) : (self.*.curr_index += 1) {
             if (self.curr_index >= self.text.len) {
                 return;
@@ -169,7 +151,11 @@ const Scanner = struct {
         }
     }
 
-    pub fn is_whitespace(self: *Self, index: usize) bool {
+    inline fn is_whitespace(self: *Self, index: usize) bool {
+        if (self.curr_index >= self.text.len) {
+            return true;
+        }
+
         switch (self.text[index]) {
             inline ' ', '\n', '\t' => {
                 return true;
@@ -187,20 +173,12 @@ const Scanner = struct {
         }
     }
 
-    pub fn finish_bareword(self: *Self, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
-        try self.add_token("BARE_WORD", start_index, end_index, allocator);
-        std.debug.print("{s}\n", .{self.text[start_index .. end_index + 1]});
+    inline fn finish_bareword(self: *Self, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
+        try self.add_token("BARE_WORD", start_index, end_index + 1, allocator);
         self.reading_bareword = false;
     }
-    //    users.name + users.phone ,
-    //    FUNCTION(users.name , users.phone) ,
-    // --THIS IS A COMMENT
-    // FROM users
-    // JOIN content ON users.content_id = content.id
-    // WHERE users.id = 12
-    // LIMIT 100
 
-    pub fn try_eat_token(self: *Self, allocator: std.mem.Allocator) !void {
+    fn try_eat_token(self: *Self, allocator: std.mem.Allocator) !void {
         self.skip_whitespace();
 
         inline for (TokenValList, 0..) |token_val, i| {
@@ -214,11 +192,7 @@ const Scanner = struct {
             }
         }
 
-        // need to figure out how to have this work properly
         if (self.is_whitespace(self.curr_index + 1) and self.reading_bareword) {
-            if (self.curr_index == 13) {
-                std.debug.print("at thirteen: barewordindex: {d} currindex: {d}\n", .{ self.bare_word_index, self.curr_index });
-            }
             try self.finish_bareword(self.bare_word_index, self.curr_index, allocator);
             self.curr_index += 1;
             return;
@@ -231,42 +205,55 @@ const Scanner = struct {
 
         self.curr_index += 1;
         return;
-        //
     }
 
     pub fn tokenize(self: *Self, allocator: std.mem.Allocator) !void {
         while (self.curr_index < self.text.len) {
             try self.try_eat_token(allocator);
         }
-
-        if (self.reading_bareword) {
-            std.debug.print("CURRENT INDEX {d}\n", .{self.curr_index});
-        }
     }
 };
 
 test "read a token properly" {
-    const allocator = std.testing.allocator;
+    var buffer: [10000]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(buffer[0..]);
+    const root_allocator = fba.allocator();
+
+    var arena = std.heap.ArenaAllocator.init(root_allocator);
+    const allocator = arena.allocator();
+    defer arena.deinit();
 
     var soa_token: SOA_TokenTypes = .{};
-    var scanner = Scanner.init(&soa_token, query);
+    var scanner = try Scanner.init(&soa_token, query, allocator);
+    defer scanner.deinit(allocator);
 
+    const start = std.time.nanoTimestamp();
     try scanner.tokenize(allocator);
-    defer soa_token.deinit(allocator);
-}
+    const end = std.time.nanoTimestamp();
+    std.debug.print("time to tokenize {d}\n", .{end - start});
 
-//pub fn tokenize_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
-//    var soa_token: SOA_Tokenypes = .{};
-//
-//    var scanner = Scanner.init(soa_token, query);
-//
-//    scanner.skip_whitespace();
-//
-//    while (true){
-//    }
-//
-//    return soa_token;
-//}
+    defer soa_token.deinit(allocator);
+
+    const t1 = soa_token.get(9);
+    switch (t1) {
+        .BARE_WORD => |token| {
+            std.debug.print("{s}\n", .{token.lexeme});
+        },
+        .STAR => |token| {
+            std.debug.print("{s}\n", .{token.lexeme});
+            //assert(std.mem.eql(u8, "*", token.lexeme));
+        },
+        .COMMA => |token| {
+            std.debug.print("FOUDN COMMA: {s}\n", .{token.lexeme});
+            //assert(std.mem.eql(u8, "*", token.lexeme));
+        },
+        .LEFT_PAREN => |token| {
+            std.debug.print("{s}\n", .{token.lexeme});
+            //assert(std.mem.eql(u8, "*", token.lexeme));
+        },
+        else => {},
+    }
+}
 
 pub fn parse_query_syntax(tables_table: tables.TablesTable, tokens: SOA_TokenTypes) void {
     const init_query_token = tokens.get(0);
@@ -279,49 +266,6 @@ pub fn parse_query_syntax(tables_table: tables.TablesTable, tokens: SOA_TokenTyp
     }
 }
 
-//test "parse query" {
-//    const allocator = std.testing.allocator;
-//
-//    var tokens = try tokenize_query(allocator);
-//    defer tokens.deinit(allocator);
-//
-//    const token_1 = tokens.pop();
-//
-//    switch (token_1) {
-//        .BARE_WORD => |token| {
-//            std.debug.print("FOUND TOKEN {s}\n", .{token.lexeme});
-//        },
-//
-//        else => {
-//            std.debug.print("BUGGED \n", .{});
-//        },
-//    }
-//    //var tables_table = try tables.initTestTables(allocator);
-//    //defer tables.deinitTablesTable(&tables_table, allocator);
-//
-//    //parse_query_syntax(tables_table, tokens);
-//}
-//
-//
-//test "tokenize query" {
-//    const allocator = std.testing.allocator;
-//
-//    var tokens = try tokenize_query(allocator);
-//    defer tokens.deinit(allocator);
-//
-//    const ident_token = tokens.get(1);
-//
-//    switch (ident_token) {
-//        .BARE_WORD => |token| {
-//            try std.testing.expect(std.mem.eql(u8, token.lexeme, "users.name"));
-//        },
-//
-//        else => {
-//            std.debug.print("FUCK", .{});
-//        },
-//    }
-//}
-//
 test "create token tagged union" {
     const Token = GenTokenTypes(&TokenTypesList);
 
@@ -334,7 +278,7 @@ test "create token tagged union" {
 }
 
 const query =
-    //\\SELECT  *
+    \\SELECT  *
     \\    users.name + users.phone ,  
     \\    FUNCTION(users.name , users.phone) ,
     \\ --THIS IS A COMMENT 
@@ -343,35 +287,5 @@ const query =
     \\ WHERE users.id = 12
     \\ LIMIT 100 
 ;
-
-//test "skip_whitespace" {
-//    const text = "hello";
-//    var soa_token: SOA_TokenTypes = .{};
-//    var scanner = Scanner.init(&soa_token, text);
-//
-//    scanner.curr_index = 0;
-//
-//    curr_index = scanner.skip_whitespace();
-//    assert(curr_index == 0);
-//
-//    const text2 =
-//        \\--hello
-//        \\ world
-//    ;
-//    scanner.curr_index = 0;
-//
-//    curr_index = Scanner.skip_whitespace(text2, curr_index);
-//    assert(curr_index == 9);
-//    assert(text2[curr_index] == 'w');
-//
-//    curr_index = 0;
-//    const text3 = "-HELLO";
-//    curr_index = Scanner.skip_whitespace(text3, curr_index);
-//    assert(curr_index == 0);
-//
-//    curr_index = 0;
-//    curr_index = Scanner.skip_whitespace(query, curr_index);
-//    assert(curr_index == 0);
-//}
 
 pub fn main() !void {}
