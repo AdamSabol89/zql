@@ -5,193 +5,266 @@ const UnionField = Type.UnionField;
 const EnumField = Type.EnumField;
 const tables = @import("tables.zig");
 const parser = @import("parser.zig");
+const assert = std.debug.assert;
 
 const TokenInfo = struct {
     lexeme: []const u8,
     index: usize,
 };
 
-//thoughts:
-// we can do token_vals = [ ], token_types = []
-// this mean each  KEYWORD is its own token
-//
-const TokenValList = [_][]const u8{
-    "IDENTIFIER",
-    "SELECT",
-    "FROM",
-    "WHERE",
-    "LIMIT",
-    "WILDCARD",
+const Token = struct { type: TokenType, info: TokenInfo };
+
+const SmallTokenValList = [_][]const u8{
+    "*",
+    "=",
+    ",",
+    ")",
+    "(",
+    "+",
+    "-",
+    "/",
+    ";",
+};
+
+const SmallTokenTypesList = [_][]const u8{
+    "STAR",
     "EQUALS",
-    "JOIN",
-    "INNER",
-    "OUTER",
-    "ON",
-    "AND",
-    "UPDATE",
-    "DELETE",
-    "INSERT",
     "COMMA",
     "RIGHT_PAREN",
     "LEFT_PAREN",
-    "ADD_OPP",
+    "PLUS",
+    "DASH",
+    "F_SLASH",
+    "SEMI_COLON",
 };
-const TokenTypesList = [_][:0]const u8{ "IDENTIFIER", "SELECT", "FROM", "WHERE", "LIMIT", "*", "=", "JOIN", "INNER", "OUTER", "ON", "AND", "UPDATE", "DELETE", "INSERT", ",", ")", "(", "+" };
 
-const TokenTypes = GenTokenTypes(&TokenTypesList);
-pub const SOA_TokenTypes = std.MultiArrayList(TokenTypes);
+const TokenType = enum(u8) {
+    STAR = 0,
+    EQUALS = 1,
+    COMMA = 2,
+    RIGHT_PAREN = 3,
+    LEFT_PAREN = 4,
+    PLUS = 5,
+    DASH = 6,
+    F_SLASH = 7,
+    SEMI_COLON = 8,
 
-pub fn GenTokenTypes(comptime token_types: []const [:0]const u8) type {
-    comptime var enum_fields: [token_types.len]EnumField = undefined;
-    comptime var union_fields: [token_types.len]UnionField = undefined;
+    //KEYWORDS
+    SELECT = 10,
+    FROM = 11,
+    WHERE = 12,
+    JOIN = 13,
+    INNER = 14,
+    OUTER = 15,
+    LEFT = 16,
+    RIGHT = 17,
+    LIMIT = 18,
+    ON = 19,
 
-    for (token_types, 0..token_types.len) |token, i| {
-        enum_fields[i] = EnumField{
-            .name = token,
-            .value = @intCast(i),
-        };
-        union_fields[i] = UnionField{
-            .name = token,
-            .type = TokenInfo,
-            .alignment = 0,
+    IDENTIFIER = 255,
+};
+//TODO: figure out what THE Fuck to do about this duplication definitely a BIG problem
+// defintely some comptime shit we can pull here
+
+const Keywords = [_]struct { []const u8, u8 }{
+    .{ "select", 10 },
+    .{ "from", 11 },
+    .{ "where", 12 },
+    .{ "join", 13 },
+    .{ "inner", 14 },
+    .{ "outer", 15 },
+    .{ "left", 16 },
+    .{ "right", 17 },
+    .{ "limit", 18 },
+    .{ "on", 19 },
+};
+
+const ComptimeSet = std.StaticStringMap(u8);
+pub const KeywordsSet = ComptimeSet.initComptime(Keywords);
+pub const SOA_token = std.MultiArrayList(Token);
+
+const Scanner = struct {
+    text: []const u8,
+
+    soa_token: *SOA_token,
+    soa_token_index: usize,
+
+    curr_index: usize,
+    curr_line: usize,
+
+    bare_word_index: usize,
+    reading_bareword: bool,
+
+    const Self = @This();
+
+    pub fn init(soa_token: *SOA_token, text: []const u8, allocator: std.mem.Allocator) !Scanner {
+        const lower = try std.ascii.allocLowerString(allocator, text);
+
+        return .{
+            .text = lower,
+            .soa_token = soa_token,
+            .soa_token_index = 0,
+            .curr_index = 0,
+            .curr_line = 0,
+            .reading_bareword = false,
+            .bare_word_index = 0,
         };
     }
 
-    const EnumToken = Type{
-        .Enum = .{
-            //LIMIT 255 union types
-            .tag_type = u8,
-            .decls = &[_]Type.Declaration{},
-            .fields = &enum_fields,
-            .is_exhaustive = true,
-        },
-    };
-
-    const EnumTokenType = @Type(EnumToken);
-
-    const LTokenTypes = Type{ .Union = .{
-        .layout = Type.ContainerLayout.auto,
-        .tag_type = EnumTokenType,
-        .fields = &union_fields,
-        .decls = &[_]Type.Declaration{},
-    } };
-
-    return @Type(LTokenTypes);
-}
-
-//TODO: think about parser some more
-pub fn tokenize_query(allocator: std.mem.Allocator) !SOA_TokenTypes {
-    const delimiters = [_]u8{ ' ', '\n', '\t' };
-
-    var token_iter = std.mem.tokenizeAny(u8, query, delimiters[0..]);
-    var SOA_token: SOA_TokenTypes = .{};
-
-    var token_index: usize = 0;
-    token_iter: while (token_iter.next()) |token| {
-
-        // HANDLE COMMENTS
-        if (std.mem.startsWith(u8, token, "--")) {
-            var i = 0 + token_iter.index;
-
-            while (query[i] != '\n') {
-                i += 1;
-            }
-
-            token_iter.index = i;
-
-            continue :token_iter;
-        }
-
-        // HANDLE KEYWORDS
-        inline for (TokenTypesList) |match_token| {
-            if (std.mem.eql(u8, match_token[0..], token)) {
-                defer token_index += 1;
-
-                //std.debug.print("Found Token: {s} at: {d} \n", .{ token, token_iter.index });
-
-                const parsed_token_payload = .{ .lexeme = token, .index = token_iter.index };
-                const parsed_token = @unionInit(TokenTypes, match_token, parsed_token_payload);
-
-                try SOA_token.insert(allocator, token_index, parsed_token);
-
-                continue :token_iter;
-            }
-        }
-
-        // HANDLE IDENTIFIERS
-        const parsed_token = TokenTypes{ .IDENTIFIER = .{
-            .lexeme = token,
-            .index = token_iter.index,
-        } };
-
-        try SOA_token.insert(allocator, token_index, parsed_token);
-        token_index += 1;
-
-        //std.debug.print("Identifier: {s}, at: {d} \n", .{ token, token_iter.index });
+    pub fn deinit(self: *Self, allocator: std.mem.Allocator) void {
+        allocator.free(self.text);
     }
 
-    return SOA_token;
+    inline fn add_token(self: *Self, enum_val: u8, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
+        const token_info = .{ .lexeme = self.text[start_index..end_index], .index = self.curr_index };
+        const parsed_token = Token{ .type = @enumFromInt(enum_val), .info = token_info };
+
+        try self.*.soa_token.insert(allocator, self.soa_token_index, parsed_token);
+
+        self.*.soa_token_index += 1;
+    }
+
+    fn skip_whitespace(self: *Self) void {
+        while (true) : (self.*.curr_index += 1) {
+            if (self.curr_index >= self.text.len) {
+                return;
+            }
+            switch (self.text[self.curr_index]) {
+                inline ' ', '\n', '\t' => {
+                    continue;
+                },
+
+                '-' => {
+                    if (self.text[self.curr_index + 1] != '-') {
+                        return;
+                    }
+
+                    while (self.text[self.curr_index] != '\n') {
+                        self.*.curr_index += 1;
+                        if (self.curr_index >= self.text.len) {
+                            return;
+                        }
+                    }
+
+                    continue;
+                },
+
+                else => {
+                    return;
+                },
+            }
+        }
+    }
+
+    inline fn is_whitespace(self: *Self, index: usize) bool {
+        if (self.curr_index >= self.text.len) {
+            return true;
+        }
+
+        switch (self.text[index]) {
+            inline ' ', '\n', '\t' => {
+                return true;
+            },
+
+            '-' => {
+                if (self.text[index] != '-') {
+                    return false;
+                }
+                return true;
+            },
+            else => {
+                return false;
+            },
+        }
+    }
+
+    inline fn finish_bareword(self: *Self, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
+        const o_enum_val = KeywordsSet.get(self.text[start_index .. end_index + 1]);
+        if (o_enum_val) |enum_val| {
+            try self.add_token(enum_val, start_index, end_index + 1, allocator);
+        } else {
+            try self.add_token(255, start_index, end_index + 1, allocator);
+        }
+        self.reading_bareword = false;
+    }
+
+    fn try_eat_token(self: *Self, allocator: std.mem.Allocator) !void {
+        self.skip_whitespace();
+
+        inline for (SmallTokenValList, 0..) |token_val, i| {
+            if (std.mem.startsWith(u8, self.text[self.curr_index..], token_val)) {
+                if (self.reading_bareword) {
+                    try self.finish_bareword(self.bare_word_index, self.curr_index - 1, allocator);
+                }
+                try self.add_token(i, self.curr_index, self.curr_index + token_val.len, allocator);
+                self.curr_index += token_val.len;
+                return;
+            }
+        }
+
+        if (self.is_whitespace(self.curr_index + 1) and self.reading_bareword) {
+            try self.finish_bareword(self.bare_word_index, self.curr_index, allocator);
+            self.curr_index += 1;
+            return;
+        }
+
+        if (!self.reading_bareword) {
+            self.reading_bareword = true;
+            self.bare_word_index = self.curr_index;
+        }
+
+        self.curr_index += 1;
+        return;
+    }
+
+    pub fn tokenize(self: *Self, allocator: std.mem.Allocator) !void {
+        while (self.curr_index < self.text.len) {
+            try self.try_eat_token(allocator);
+        }
+    }
+};
+
+test "read a token properly" {
+    var buffer: [10000]u8 = undefined;
+    var fba = std.heap.FixedBufferAllocator.init(buffer[0..]);
+    const root_allocator = fba.allocator();
+
+    var arena = std.heap.ArenaAllocator.init(root_allocator);
+    const allocator = arena.allocator();
+    defer arena.deinit();
+
+    var soa_token: SOA_token = .{};
+    var scanner = try Scanner.init(&soa_token, query, allocator);
+    defer scanner.deinit(allocator);
+
+    const start = std.time.nanoTimestamp();
+    try scanner.tokenize(allocator);
+    const end = std.time.nanoTimestamp();
+    std.debug.print("time to tokenize {d}\n", .{end - start});
+
+    defer soa_token.deinit(allocator);
+
+    const t1 = soa_token.get(0);
+    std.debug.print("{s}\n", .{t1.info.lexeme});
+    std.debug.print("{d}\n", .{@intFromEnum(t1.type)});
+    parser.parse_query(soa_token);
 }
 
-pub fn parse_query_syntax(tables_table: tables.TablesTable, tokens: SOA_TokenTypes) void {
+pub fn parse_query_syntax(tables_table: tables.TablesTable, tokens: SOA_token) void {
     const init_query_token = tokens.get(0);
 
     switch (init_query_token) {
-        .SELECT => {
-            parser.parse_select_query(tables_table, tokens);
+        .BARE_WORD => {
+            _ = parser.parse_select_query(tokens, tables_table);
         },
-        .UPDATE => {},
-        .INSERT => {},
-        .DELETE => {},
+        else => {},
     }
-}
-
-test "parse query" {
-    const allocator = std.testing.allocator;
-
-    var tokens = try tokenize_query(allocator);
-    defer tokens.deinit(allocator);
-
-    var tables_table = try tables.initTestTables(allocator);
-    defer tables.deinitTablesTable(&tables_table, allocator);
-
-    parse_query_syntax(tables_table, tokens);
-}
-
-test "tokenize query" {
-    const allocator = std.testing.allocator;
-
-    var tokens = try tokenize_query(allocator);
-    defer tokens.deinit(allocator);
-
-    const ident_token = tokens.get(1);
-
-    switch (ident_token) {
-        .IDENTIFIER => |token| {
-            try std.testing.expect(std.mem.eql(u8, token.lexeme, "IDENTIFIER"));
-        },
-
-        else => {
-            std.debug.print("FUCK", .{});
-        },
-    }
-}
-
-test "create token tagged union" {
-    const Token = GenTokenTypes(&TokenTypesList);
-
-    const select_token: Token = Token{ .SELECT = .{
-        .lexeme = "",
-        .index = 12,
-    } };
-
-    std.debug.print("{s}", .{@tagName(select_token)});
 }
 
 const query =
-    \\ SELECT 
-    \\    users.name + users.phone,  
-    \\    FUNCTION(users.name, users.phone),
+    \\SELECT  *
+    \\    users.name + users.phone ,  
+    \\    FUNCTION(users.name , users.phone) ,
     \\ --THIS IS A COMMENT 
     \\ FROM users
     \\ JOIN content ON users.content_id = content.id
