@@ -42,10 +42,7 @@ pub fn lookup_table(table_name: []const u8) bool {
     return true;
 }
 
-pub const StateMachine = struct {};
-
 const assert = std.debug.assert;
-
 pub fn parse_from_clause(tokens: lexer.SOA_token, from_index: usize) FromClause {
     var next = tokens.get(from_index + 1);
 
@@ -82,14 +79,11 @@ pub fn parse_select_query(start_index: usize, tokens: lexer.SOA_token) void {
         switch (types[i]) {
             .FROM => {
                 std.debug.print("Found from clause ", .{});
+
                 const from_clause = parse_from_clause(tokens, i);
-                switch (from_clause) {
-                    .table => |table_name| {
-                        std.debug.print("{s}\n", .{table_name});
-                    },
-                    else => {},
-                }
+                _ = from_clause;
             },
+
             else => {},
         }
     }
