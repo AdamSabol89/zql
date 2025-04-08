@@ -57,12 +57,19 @@ pub fn build(b: *std.Build) void {
     // Creates a step for unit testing. This only builds the test executable
     // but does not run it.
 
-    const tables_unit_test = b.addTest(.{
-        .root_source_file = b.path("src/tables.zig"),
+    const parser_unit_test = b.addTest(.{
+        .root_source_file = b.path("src/parser.zig"),
         .target = target,
         .optimize = optimize,
     });
-    const run_tables_unit_test = b.addRunArtifact(tables_unit_test);
+    const run_parser_unit_test = b.addRunArtifact(parser_unit_test);
+
+    const column_expression_test = b.addTest(.{
+        .root_source_file = b.path("src/column_expression.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const run_column_expression_test = b.addRunArtifact(column_expression_test);
 
     const exe_unit_tests = b.addTest(.{
         .root_source_file = b.path("src/main.zig"),
@@ -78,5 +85,6 @@ pub fn build(b: *std.Build) void {
 
     const test_step = b.step("test", "Run unit tests");
     test_step.dependOn(&run_exe_unit_tests.step);
-    test_step.dependOn(&run_tables_unit_test.step);
+    test_step.dependOn(&run_parser_unit_test.step);
+    test_step.dependOn(&run_column_expression_test.step);
 }
