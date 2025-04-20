@@ -86,6 +86,7 @@ pub const TokenType = enum(u8) {
     AND = 120,
     NOT = 121,
     OR = 122,
+    AS = 123,
 
     END_OF_TOKEN = 254,
     IDENTIFIER = 255,
@@ -107,16 +108,8 @@ const Keywords = [_]struct { []const u8, u8 }{
     .{ "and", 120 },
     .{ "not", 121 },
     .{ "or", 122 },
+    .{ "as", 122 },
 };
-
-//SELECT  x,y,z
-//FROM blah
-//WHERE x BETWEEN f(x) AND f(z)
-//                        AND
-//               /                    \
-//           BETWEEN              identifier
-//        /           \
-//    identifier      identifier
 
 const ComptimeSet = std.StaticStringMap(u8);
 pub const KeywordsSet = ComptimeSet.initComptime(Keywords);
@@ -153,7 +146,9 @@ pub const Scanner = struct {
     }
 
     inline fn add_token(self: *Self, enum_val: u8, start_index: usize, end_index: usize, allocator: std.mem.Allocator) !void {
-        const token_info = .{ .lexeme = self.text[start_index..end_index], .index = self.curr_index, .line = self.curr_line };
+        const token_info: TokenInfo = .{ .lexeme = self.text[start_index..end_index], .index = self.curr_index, .line = self.curr_line };
+        const x = 12;
+        _ = x;
 
         const parsed_token = Token{ .type = @enumFromInt(enum_val), .info = token_info };
 
@@ -315,4 +310,28 @@ const query =
     //\\ LIMIT 100;
 ;
 
-pub fn main() !void {}
+pub fn main() anyerror!void {
+    //var buffer: [10000]u8 = undefined;
+    //var fba = std.heap.FixedBufferAllocator.init(buffer[0..]);
+    //const root_allocator = fba.allocator();
+
+    //var arena = std.heap.ArenaAllocator.init(root_allocator);
+    //const allocator = arena.allocator();
+    //defer arena.deinit();
+
+    //var soa_token: SOA_token = .{};
+    //var scanner = try Scanner.init(&soa_token, query, allocator);
+    //defer scanner.deinit(allocator);
+
+    //const start = std.time.nanoTimestamp();
+    //try scanner.tokenize(allocator);
+    //const end = std.time.nanoTimestamp();
+    //std.debug.print("time to tokenize {d}\n", .{end - start});
+
+    //defer soa_token.deinit(allocator);
+
+    //const t1 = soa_token.get(0);
+    //std.debug.print("{s}\n", .{t1.info.lexeme});
+    //std.debug.print("{d}\n", .{@intFromEnum(t1.type)});
+    //try parser.parse_query(soa_token, allocator);
+}
