@@ -1,4 +1,5 @@
 const std = @import("std");
+const assert = std.debug.assert;
 const column_expression = @import("column_expression.zig");
 const BinaryOp = column_expression.BinaryOp;
 
@@ -14,6 +15,23 @@ pub const PrimitiveType = enum(u8) {
 
     BYTES = 7,
     SENTINEL = 8,
+
+    fn get_native_type(prim_type: PrimitiveType) type  { 
+         return switch(prim_type) {
+            .U32 => u32, 
+            .U64 => u64, 
+            .INT32 => i32,
+            .INT64 => i64,
+            .BOOLEAN => bool, 
+            .FLOAT32 => f32,
+            .FLOAT64 => f64, 
+            else => blk: {
+                std.debug.print("Invalid call on a non native type, either sentinel or BYTES \n");
+                assert(false); 
+                break :blk bool;
+            }
+        };
+    }
 };
 
 pub const BinaryOpInfo = struct {

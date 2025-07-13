@@ -67,30 +67,31 @@ test "test table catalog" {
     assert(id_column.column_type == .U64);
 }
 
-test "test table context " {
-    var buffer: [10000]u8 = undefined;
-    var fba = std.heap.FixedBufferAllocator.init(buffer[0..]);
-    const root_allocator = fba.allocator();
-
-    var arena = std.heap.ArenaAllocator.init(root_allocator);
-    const allocator = arena.allocator();
-    defer arena.deinit();
-
-    const table_catalog = try ctg.create_test_catalog(allocator);
-    var users_table = try table_catalog.read_table_info("users", .{});
-
-    const t_ctx: binder.TableContext = .{ .table_info = &users_table, .alias = "usrs" };
-    var arr = [1]binder.TableContext{t_ctx};
-    var q_ctx = binder.Context.init(arr[0..]);
-
-    const col_detail = binder.read_as_identifier("usrs.id");
-    const col_info = q_ctx.try_read_identifier(col_detail);
-    const val = col_info.?;
-
-    std.debug.print("if exists {s}\n", .{val.column_info.name});
-
-    //assert(std.mem.eql(ctg.TableInfo, tbl_context.?.table_info.*, users_table));
-}
+//test "test table context " {
+//    var buffer: [10000]u8 = undefined;
+//    var fba = std.heap.FixedBufferAllocator.init(buffer[0..]);
+//    const root_allocator = fba.allocator();
+//
+//    var arena = std.heap.ArenaAllocator.init(root_allocator);
+//    const allocator = arena.allocator();
+//    defer arena.deinit();
+//
+//    const table_catalog = try ctg.create_test_catalog(allocator);
+//    var users_table = try table_catalog.read_table_info("users", .{});
+//
+//    const t_ctx: binder.TableContext = .{ .table_info = &users_table, .alias = "usrs" };
+//    var arr = [1]binder.TableContext{t_ctx};
+//    var q_ctx = binder.QueryContext.init(arr[0..], allocator);
+//
+//    const col_detail = binder.parse_as_identifier("usrs.id");
+//    const col_info = binder.bind_identifier();
+//    const col_info = q_ctx.try_read_identifier(col_detail);
+//    const val = col_info.?;
+//
+//    std.debug.print("if exists {s}\n", .{val.column_info.name});
+//
+//    //assert(std.mem.eql(ctg.TableInfo, tbl_context.?.table_info.*, users_table));
+//}
 
 test "generate binary ops" {
     const test_val = BinaryOpInfo.binary_ops[1];
@@ -113,7 +114,7 @@ test "count identifiers" {
 
 test "parse identifier" {
     const test_ident_name = "schema1.users.id";
-    const identifier_info = binder.read_as_identifier(test_ident_name);
+    const identifier_info = binder.parse_as_identifier(test_ident_name);
     assert(std.mem.eql(u8, identifier_info.column, "id"));
 }
 
@@ -131,4 +132,52 @@ test "vector addition" {
     const slice_result: [16]i32 = vector_3;
 
     assert(slice_result[0] == 200);
+}
+
+
+test "test parse header" { 
+    //const header = "COLUMN1|COLUMN2|COLUMN3|COLUMN4|SUPAEXTRADUUUUUUUUPAAAAAALONGEEXTRALONGVERYVERYVERYLONGCOLUMNNAMETHATGOESONANDONANDONANDONANDONANDONCOLUMN|ANOTHERREALLYLONGCOLUMNNAMETHATISACTUALLYNOTTHATLONGBUTMIGHTLOOKKINDOFLONGBECAUSEYEAH|COLUMN7";
+    const sep = '|';
+    const all_sep = [_]u8{sep} ** 64;
+    const header = "COLUMN1|COLUMN2|COLUMN3|COLUMN4|COLUMN5|COLUMN12|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    //const escaped_escaped= \\ COLUMN1\\|COLUMN2|COLUMN3\|COLUMN4|COLUMN5|COLUMN12|AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA
+    //    ;
+    
+    
+    //const header = "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA";
+
+    var offset: usize = 0; 
+    offset = 0;
+
+    const u8_64width_vec = @Vector(64, u8);
+    const inst_vec: u8_64width_vec = header[offset..][0..64].*;
+    const sep_vec: u8_64width_vec = all_sep;
+
+
+    const bitmask: u64 = @bitCast(inst_vec == sep_vec); 
+    const sep_index: u64 = @ctz(bitmask);
+    std.debug.print("byte values {d} \n", .{sep_index});
+
+    const index_bool: bool = sep_index == 0;
+    const index: usize = @intFromBool(index_bool);
+
+    std.debug.print("something {d} \n", .{index});
+}
+
+test "bitshift" { 
+    const test_val: usize = 0b0000;
+    const result: usize = @ctz(test_val);
+
+    const shift_result: usize = test_val >> @truncate(result);
+    std.debug.print("ctz result: {b}\n", .{shift_result});
+}
+ 
+test "negative test" { 
+    const neg_one: isize = -1;
+    const index: isize = 100; 
+    const result: isize = neg_one + index;
+    const neg_one_small: i1 = @truncate(result);
+
+    std.debug.print("somethign {d}\n", .{neg_one_small});
 }

@@ -18,7 +18,7 @@ const AliasedTable = struct {
     alias: ?[]const u8,
 };
 
-const AliasedColumnExpression = struct {
+pub const AliasedColumnExpression = struct {
     expression: *ColumnExpression,
     alias: ?[]const u8,
 };

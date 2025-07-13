@@ -242,7 +242,7 @@ pub const ColumnExpressionParser = struct {
                     // Function Call
                     _ = self.consume_curr_token_type();
 
-                    var args = try std.ArrayList(*ColumnExpression).initCapacity(self.allocator, 5);
+                    var args = try std.ArrayList(*ColumnExpression).initCapacity(self.allocator, 1);
 
                     if (self.peek_curr_token_type() != .RIGHT_PAREN) {
                         while (true) {
